@@ -1,3 +1,5 @@
+import { supabase } from './supabase';
+
 export type QuestionType =
   | 'short'
   | 'text'
@@ -43,9 +45,6 @@ export interface Response {
   submittedAt: Date;
 }
 
-const SURVEYS_KEY = 'cafecito_surveys';
-const RESPONSES_KEY = 'cafecito_responses';
-
 export const LIKERT_DEFAULT = [
   'Muy en desacuerdo',
   'En desacuerdo',
@@ -54,20 +53,39 @@ export const LIKERT_DEFAULT = [
   'Muy de acuerdo',
 ];
 
-export function getSurveys(): Survey[] {
-  if (typeof window === 'undefined') return [];
-  const data = localStorage.getItem(SURVEYS_KEY);
-  if (!data) return [];
-  return JSON.parse(data).map((s: any) => ({
-    status: s.status ?? 'published',
-    updatedAt: new Date(s.updatedAt ?? s.createdAt),
-    ...s,
-    createdAt: new Date(s.createdAt),
-  }));
+// --- Mapeo entre filas de la base (snake_case) y el modelo de la app ---
+
+function rowToSurvey(r: any): Survey {
+  return {
+    id: r.id,
+    title: r.title,
+    description: r.description ?? '',
+    questions: (r.questions as Question[]) ?? [],
+    status: (r.status as SurveyStatus) ?? 'published',
+    shareLink: r.share_link,
+    createdAt: new Date(r.created_at),
+    updatedAt: new Date(r.updated_at ?? r.created_at),
+  };
 }
 
-function persist(surveys: Survey[]) {
-  localStorage.setItem(SURVEYS_KEY, JSON.stringify(surveys));
+function rowToResponse(r: any): Response {
+  return {
+    id: r.id,
+    surveyId: r.survey_id,
+    answers: r.answers ?? {},
+    submittedAt: new Date(r.submitted_at),
+  };
+}
+
+// --- Encuestas ---
+
+export async function getSurveys(): Promise<Survey[]> {
+  const { data, error } = await supabase
+    .from('surveys')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(rowToSurvey);
 }
 
 interface SurveyInput {
@@ -79,79 +97,99 @@ interface SurveyInput {
 }
 
 /** Crea o actualiza una encuesta. Devuelve la encuesta resultante. */
-export function upsertSurvey(input: SurveyInput): Survey {
-  const surveys = getSurveys();
-
+export async function upsertSurvey(input: SurveyInput): Promise<Survey> {
   if (input.id) {
-    const index = surveys.findIndex((s) => s.id === input.id);
-    if (index !== -1) {
-      const updated: Survey = {
-        ...surveys[index],
+    const { data, error } = await supabase
+      .from('surveys')
+      .update({
         title: input.title,
         description: input.description,
         questions: input.questions,
         status: input.status,
-        updatedAt: new Date(),
-      };
-      surveys[index] = updated;
-      persist(surveys);
-      return updated;
-    }
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', input.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return rowToSurvey(data);
   }
 
-  const id = Date.now().toString();
-  const newSurvey: Survey = {
-    id,
-    title: input.title,
-    description: input.description,
-    questions: input.questions,
-    status: input.status,
-    shareLink: `${id}-${Math.random().toString(36).substring(2, 11)}`,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-  surveys.push(newSurvey);
-  persist(surveys);
-  return newSurvey;
+  const shareLink = `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .substring(2, 11)}`;
+  const { data, error } = await supabase
+    .from('surveys')
+    .insert({
+      title: input.title,
+      description: input.description,
+      questions: input.questions,
+      status: input.status,
+      share_link: shareLink,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToSurvey(data);
 }
 
-export function getSurveyByShareLink(shareLink: string): Survey | null {
-  return getSurveys().find((s) => s.shareLink === shareLink) || null;
+export async function getSurveyByShareLink(
+  shareLink: string
+): Promise<Survey | null> {
+  const { data, error } = await supabase
+    .from('surveys')
+    .select('*')
+    .eq('share_link', shareLink)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? rowToSurvey(data) : null;
 }
 
-export function getSurveyById(id: string): Survey | null {
-  return getSurveys().find((s) => s.id === id) || null;
+export async function getSurveyById(id: string): Promise<Survey | null> {
+  const { data, error } = await supabase
+    .from('surveys')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? rowToSurvey(data) : null;
 }
 
-export function deleteSurvey(id: string): void {
-  persist(getSurveys().filter((s) => s.id !== id));
+export async function deleteSurvey(id: string): Promise<void> {
+  const { error } = await supabase.from('surveys').delete().eq('id', id);
+  if (error) throw error;
 }
 
-export function saveResponse(response: Omit<Response, 'id' | 'submittedAt'>): Response {
-  const responses = getResponses();
-  const newResponse: Response = {
-    ...response,
-    id: Date.now().toString(),
-    submittedAt: new Date(),
-  };
-  responses.push(newResponse);
-  localStorage.setItem(RESPONSES_KEY, JSON.stringify(responses));
-  return newResponse;
+// --- Respuestas ---
+
+export async function saveResponse(
+  response: Omit<Response, 'id' | 'submittedAt'>
+): Promise<Response> {
+  const { data, error } = await supabase
+    .from('responses')
+    .insert({
+      survey_id: response.surveyId,
+      answers: response.answers,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToResponse(data);
 }
 
-export function getResponses(): Response[] {
-  if (typeof window === 'undefined') return [];
-  const data = localStorage.getItem(RESPONSES_KEY);
-  if (!data) return [];
-  return JSON.parse(data).map((r: any) => ({
-    ...r,
-    submittedAt: new Date(r.submittedAt),
-  }));
+export async function getResponsesBySurvey(
+  surveyId: string
+): Promise<Response[]> {
+  const { data, error } = await supabase
+    .from('responses')
+    .select('*')
+    .eq('survey_id', surveyId)
+    .order('submitted_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(rowToResponse);
 }
 
-export function getResponsesBySurvey(surveyId: string): Response[] {
-  return getResponses().filter((r) => r.surveyId === surveyId);
-}
+// --- Lógica condicional (puras, sin red) ---
 
 /** Evalúa si una pregunta debe mostrarse dadas las respuestas actuales. */
 export function isQuestionVisible(

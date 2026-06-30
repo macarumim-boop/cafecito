@@ -22,15 +22,25 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const foundSurvey = getSurveyById(surveyId);
-    setSurvey(foundSurvey);
-
-    if (foundSurvey) {
-      const foundResponses = getResponsesBySurvey(surveyId);
-      setResponses(foundResponses);
-    }
-
-    setLoading(false);
+    let active = true;
+    (async () => {
+      try {
+        const foundSurvey = await getSurveyById(surveyId);
+        if (!active) return;
+        setSurvey(foundSurvey);
+        if (foundSurvey) {
+          const foundResponses = await getResponsesBySurvey(surveyId);
+          if (active) setResponses(foundResponses);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, [surveyId]);
 
   const handleDownloadCSV = () => {

@@ -25,14 +25,20 @@ export function Dashboard() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const list = getSurveys();
+  const loadSurveys = async () => {
+    const list = await getSurveys();
     setSurveys(list);
     const c: Record<string, number> = {};
-    list.forEach((s) => {
-      c[s.id] = getResponsesBySurvey(s.id).length;
-    });
-    setCounts(c);
+    await Promise.all(
+      list.map(async (s) => {
+        c[s.id] = (await getResponsesBySurvey(s.id)).length;
+      })
+    );
+    setCounts({ ...c });
+  };
+
+  useEffect(() => {
+    loadSurveys().catch(console.error);
   }, []);
 
   const handleLogout = () => {
@@ -40,10 +46,10 @@ export function Dashboard() {
     router.push('/login');
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('¿Eliminar esta encuesta y todas sus respuestas?')) {
-      deleteSurvey(id);
-      setSurveys(getSurveys());
+      await deleteSurvey(id);
+      await loadSurveys();
       setMenuId(null);
     }
   };

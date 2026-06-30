@@ -63,18 +63,24 @@ function CreatePageInner() {
 
   // Cargar borrador existente
   useEffect(() => {
-    if (editId) {
-      const existing = getSurveyById(editId);
-      if (existing) {
-        setSurveyId(existing.id);
-        setTitle(existing.title);
-        setDescription(existing.description);
-        setQuestions(existing.questions.length ? existing.questions : [newQuestion()]);
-        setSelectedId(existing.questions[0]?.id || '');
-        return;
+    let active = true;
+    (async () => {
+      if (editId) {
+        const existing = await getSurveyById(editId);
+        if (existing && active) {
+          setSurveyId(existing.id);
+          setTitle(existing.title);
+          setDescription(existing.description);
+          setQuestions(existing.questions.length ? existing.questions : [newQuestion()]);
+          setSelectedId(existing.questions[0]?.id || '');
+          return;
+        }
       }
-    }
-    setSelectedId((prev) => prev || questions[0]?.id || '');
+      if (active) setSelectedId((prev) => prev || questions[0]?.id || '');
+    })();
+    return () => {
+      active = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId]);
 
@@ -139,8 +145,8 @@ function CreatePageInner() {
     return true;
   };
 
-  const persist = (status: 'draft' | 'published') => {
-    const saved = upsertSurvey({
+  const persist = async (status: 'draft' | 'published') => {
+    const saved = await upsertSurvey({
       id: surveyId,
       title,
       description,
@@ -151,33 +157,47 @@ function CreatePageInner() {
     return saved;
   };
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     if (!title.trim()) {
       alert('Ponle un título para guardar el borrador');
       return;
     }
     setSaving('draft');
-    persist('draft');
-    setTimeout(() => {
-      setSaving(null);
+    try {
+      await persist('draft');
       router.push('/');
-    }, 400);
+    } catch (e) {
+      console.error(e);
+      alert('No se pudo guardar. Revisa la conexión con Supabase.');
+      setSaving(null);
+    }
   };
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (!validate()) return;
     setSaving('publish');
-    persist('published');
-    setTimeout(() => {
-      setSaving(null);
+    try {
+      await persist('published');
       router.push('/');
-    }, 400);
+    } catch (e) {
+      console.error(e);
+      alert('No se pudo publicar. Revisa la conexión con Supabase.');
+      setSaving(null);
+    }
   };
 
-  const handlePreview = () => {
+  const handlePreview = async () => {
     if (!validate()) return;
-    const saved = persist('draft'); // guarda estado actual sin publicar
-    window.open(`/survey/${saved.shareLink}?preview=1`, '_blank');
+    // Abrimos la pestaña antes del await para evitar el bloqueo de pop-ups
+    const win = window.open('about:blank', '_blank');
+    try {
+      const saved = await persist('draft');
+      if (win) win.location.href = `/survey/${saved.shareLink}?preview=1`;
+    } catch (e) {
+      console.error(e);
+      if (win) win.close();
+      alert('No se pudo generar la vista previa.');
+    }
   };
 
   // Preguntas anteriores que pueden usarse como condición

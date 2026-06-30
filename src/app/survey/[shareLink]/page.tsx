@@ -25,20 +25,33 @@ function SurveyPageInner() {
   const [slideOut, setSlideOut] = useState(false);
 
   useEffect(() => {
-    const foundSurvey = getSurveyByShareLink(shareLink);
-    if (!foundSurvey) {
-      setError('Encuesta no encontrada');
-    } else if (foundSurvey.status === 'draft' && !isPreview) {
-      setError('Esta encuesta aún no está publicada');
-    } else {
-      setSurvey(foundSurvey);
-      const initialAnswers: Record<string, any> = {};
-      foundSurvey.questions.forEach((q) => {
-        initialAnswers[q.id] = q.type === 'multiple' ? [] : '';
-      });
-      setAnswers(initialAnswers);
-    }
-    setLoading(false);
+    let active = true;
+    (async () => {
+      try {
+        const foundSurvey = await getSurveyByShareLink(shareLink);
+        if (!active) return;
+        if (!foundSurvey) {
+          setError('Encuesta no encontrada');
+        } else if (foundSurvey.status === 'draft' && !isPreview) {
+          setError('Esta encuesta aún no está publicada');
+        } else {
+          setSurvey(foundSurvey);
+          const initialAnswers: Record<string, any> = {};
+          foundSurvey.questions.forEach((q) => {
+            initialAnswers[q.id] = q.type === 'multiple' ? [] : '';
+          });
+          setAnswers(initialAnswers);
+        }
+      } catch (e) {
+        console.error(e);
+        if (active) setError('No se pudo cargar la encuesta');
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, [shareLink, isPreview]);
 
   const handleChange = (questionId: string, value: any, type: string) => {
@@ -103,17 +116,22 @@ function SurveyPageInner() {
     }, 300);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canProceed() || !survey) return;
     if (isPreview) {
       setSubmitted(true);
       return;
     }
-    saveResponse({
-      surveyId: survey.id,
-      answers,
-    });
-    setSubmitted(true);
+    try {
+      await saveResponse({
+        surveyId: survey.id,
+        answers,
+      });
+      setSubmitted(true);
+    } catch (e) {
+      console.error(e);
+      alert('No se pudo enviar tu respuesta. Inténtalo de nuevo.');
+    }
   };
 
   if (loading) {
